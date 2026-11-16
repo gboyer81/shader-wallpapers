@@ -1,5 +1,7 @@
 import "./style.css";
 import { Renderer } from "./renderer";
+import { QUALITY_DPR, loadSettings, saveSettings, type Settings } from "./settings";
+import { createSettingsPanel } from "./settings-panel";
 import { WALLPAPERS } from "./shaders";
 
 const STORAGE_KEY = "shaderwall.idx";
@@ -8,10 +10,10 @@ const IDLE_MS = 2500;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("c");
-const ui = $("ui");
 const dots = $("dots");
 const num = $("num");
 const lbl = $("lbl");
+const body = document.body;
 
 let renderer: Renderer;
 try {
@@ -21,13 +23,15 @@ try {
   throw new Error("WebGL2 not available");
 }
 
+let settings: Settings = loadSettings();
+
 // ---- Layout -------------------------------------------------------------
 let W = 0;
 let H = 0;
 function resize() {
   W = innerWidth;
   H = innerHeight;
-  renderer.resize(W, H, Math.min(devicePixelRatio || 1, 1.5));
+  renderer.resize(W, H, Math.min(devicePixelRatio || 1, QUALITY_DPR[settings.quality]));
 }
 addEventListener("resize", resize);
 resize();
@@ -35,15 +39,17 @@ resize();
 /** Client px → shader space (height = 1, origin at centre, y up). */
 const toShader = (x: number, y: number): [number, number] => [(x - W / 2) / H, (H / 2 - y) / H];
 
-// ---- Pointer ------------------------------------------------------------
+// ---- Pointer / idle -----------------------------------------------------
 let target: [number, number] = [0.18, 0.08];
 const mouse: [number, number] = [0.18, 0.08];
 
 let idleTimer: number | undefined;
 function wake() {
-  ui.classList.remove("idle");
+  body.classList.remove("idle");
   clearTimeout(idleTimer);
-  idleTimer = window.setTimeout(() => ui.classList.add("idle"), IDLE_MS);
+  idleTimer = window.setTimeout(() => {
+    if (!panel.isOpen()) body.classList.add("idle");
+  }, IDLE_MS);
 }
 
 addEventListener("pointermove", (e) => {
@@ -79,12 +85,18 @@ const buttons = WALLPAPERS.map((w, i) => {
 function renderLabel() {
   num.textContent = String(index + 1).padStart(2, "0");
   lbl.textContent = WALLPAPERS[index].name;
-  ui.dataset.theme = WALLPAPERS[index].theme;
+  body.dataset.theme = WALLPAPERS[index].theme;
   buttons.forEach((b, i) => b.setAttribute("aria-pressed", String(i === index)));
 }
 
+let cycleTimer: number | undefined;
+function scheduleCycle() {
+  clearTimeout(cycleTimer);
+  if (settings.autoCycle > 0) cycleTimer = window.setTimeout(() => go(index + 1, false), settings.autoCycle * 1000);
+}
+
 let switchTimer: number | undefined;
-function go(i: number) {
+function go(i: number, fromUser = true) {
   i = (i + WALLPAPERS.length) % WALLPAPERS.length;
   if (i === index) return;
   clearTimeout(switchTimer);
@@ -98,30 +110,49 @@ function go(i: number) {
     }
     renderLabel();
     canvas.style.opacity = "1";
+    scheduleCycle();
   }, FADE_MS);
-  wake();
+  if (fromUser) wake();
 }
 
 addEventListener("keydown", (e) => {
+  // Leave keys alone while a form control has focus (sliders use arrows).
+  if ((e.target as HTMLElement).closest?.("input, select, textarea")) return;
   const n = Number(e.key);
   if (Number.isInteger(n) && n >= 1 && n <= WALLPAPERS.length) go(n - 1);
   else if (e.key === "ArrowRight") go(index + 1);
   else if (e.key === "ArrowLeft") go(index - 1);
 });
 
+// ---- Settings -----------------------------------------------------------
+function applySettings(prev: Settings | null) {
+  body.classList.toggle("no-switcher", !settings.showSwitcher);
+  if (prev && prev.quality !== settings.quality) resize();
+  if (!prev || prev.autoCycle !== settings.autoCycle) scheduleCycle();
+}
+
+const panel = createSettingsPanel($("settings"), settings, (next) => {
+  const prev = settings;
+  settings = next;
+  saveSettings(settings);
+  applySettings(prev);
+  wake();
+});
+
 renderLabel();
+applySettings(null);
 wake();
 
 // ---- Loop ---------------------------------------------------------------
-let last = renderer.now();
-function frame() {
-  const t = renderer.now();
-  const dt = Math.min(t - last, 0.1);
-  last = t;
+let last = performance.now();
+function frame(nowMs: number) {
+  const dt = Math.min((nowMs - last) / 1000, 0.1);
+  last = nowMs;
+  renderer.advance(dt * settings.speed);
   const k = 1 - Math.exp(-dt * 6); // frame-rate independent easing toward pointer
   mouse[0] += (target[0] - mouse[0]) * k;
   mouse[1] += (target[1] - mouse[1]) * k;
-  renderer.draw(index, t, mouse);
+  renderer.draw(index, mouse, settings);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

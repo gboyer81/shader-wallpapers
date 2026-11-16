@@ -20,10 +20,12 @@ void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-
  *  T  – seconds since start
  *  M  – smoothed pointer, aspect-corrected (height = 1, origin at centre)
  *  C  – recent clicks: xy position, z start time
+ *  Look – user grade: x hue (radians), y saturation, z brightness, w grain
+ *  Vig  – vignette strength multiplier (1 = as designed)
  */
 export const HEAD = `#version 300 es
 precision highp float;
-uniform vec2 R;uniform float T;uniform vec2 M;uniform vec3 C[${MAX_CLICKS}];
+uniform vec2 R;uniform float T;uniform vec2 M;uniform vec3 C[${MAX_CLICKS}];uniform vec4 Look;uniform float Vig;
 out vec4 O;
 float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
 float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),mix(hash(i+vec2(0,1)),hash(i+1.),u.x),u.y);}
@@ -31,6 +33,11 @@ float fbm(vec2 p){float v=0.,a=.5;mat2 r=mat2(.8,.6,-.6,.8);for(int i=0;i<5;i++)
 vec2 P(){return (gl_FragCoord.xy-.5*R)/R.y;}
 float ring(vec2 p,float spd,float w){float s=0.;for(int i=0;i<${MAX_CLICKS};i++){float a=T-C[i].z;if(a<0.||a>5.)continue;float d=length(p-C[i].xy);s+=exp(-pow((d-a*spd)*w,2.))*exp(-a*1.);}return s;}
 float grain(){return (hash(gl_FragCoord.xy+fract(T*7.)*100.)-.5)*.016;}
+vec4 finish(vec3 c){
+if(Look.x!=0.){const vec3 k=vec3(.57735);float cs=cos(Look.x),sn=sin(Look.x);c=c*cs+cross(k,c)*sn+k*dot(k,c)*(1.-cs);}
+c=mix(vec3(dot(c,vec3(.2126,.7152,.0722))),c,Look.y);
+c*=Look.z;
+return vec4(c+grain()*Look.w,1);}
 `;
 
 export const WALLPAPERS: Wallpaper[] = [
@@ -49,8 +56,8 @@ col=mix(col,vec3(.28,.2,.42),smoothstep(.4,.9,w.x)*.6);
 col+=vec3(.75,.55,.5)*pow(smoothstep(.55,.95,f),3.)*.25;
 col+=vec3(.5,.6,.8)*exp(-l*3.5)*.07;
 col+=vec3(.6,.7,.9)*rp*.1;
-col*=1.-.35*dot(p*.6,p*.6);
-O=vec4(col+grain(),1);}`,
+col*=1.-Vig*.35*dot(p*.6,p*.6);
+O=finish(col);}`,
   },
   {
     name: "Lattice",
@@ -69,8 +76,8 @@ float dt=1.-smoothstep(r-px,r+px,length(cell));
 vec3 bg=vec3(.925,.925,.915)-.025*lens;
 vec3 ink=mix(vec3(.64,.64,.62),vec3(.25,.38,.92),clamp(lens*.85+rp,0.,1.));
 vec3 col=mix(bg,ink,dt);
-col*=1.-.08*dot(p,p);
-O=vec4(col+grain(),1);}`,
+col*=1.-Vig*.08*dot(p,p);
+O=finish(col);}`,
   },
   {
     name: "Contour",
@@ -86,8 +93,8 @@ float major=1.-smoothstep(0.,fw*1.8,abs(fract(L/5.+.5)-.5)*5.);
 vec3 col=vec3(.075,.07,.066);
 col+=vec3(.55,.49,.43)*(line*.22+major*.3)*(1.+g*1.4);
 col+=vec3(.95,.55,.35)*max(line,major)*g*.22;
-col*=1.-.3*dot(p*.6,p*.6);
-O=vec4(col+grain(),1);}`,
+col*=1.-Vig*.3*dot(p*.6,p*.6);
+O=finish(col);}`,
   },
   {
     name: "Glass",
@@ -106,8 +113,8 @@ vec3 col=vec3(scene(vec2(p.x+bend*.85,p.y)).r,scene(vec2(p.x+bend,p.y)).g,scene(
 float e=pow(abs(rib)*2.,14.);
 col*=.93+.07*cos(rib*6.2832);
 col+=e*(.025+exp(-length(p-M)*3.)*.09);
-col*=1.-.25*dot(p*.6,p*.6);
-O=vec4(col+grain(),1);}`,
+col*=1.-Vig*.25*dot(p*.6,p*.6);
+O=finish(col);}`,
   },
   {
     name: "Liquid",
@@ -127,7 +134,7 @@ vec3 blob=mix(vec3(.24,.25,.31),vec3(.13,.14,.18),inner);
 blob=mix(blob,vec3(.2,.3,.62),near*.35*(1.-inner));
 blob+=.12*(1.-smoothstep(1.,1.5,f));
 vec3 col=mix(bg,blob,edge);
-col*=1.-.06*dot(p,p);
-O=vec4(col+grain(),1);}`,
+col*=1.-Vig*.06*dot(p,p);
+O=finish(col);}`,
   },
 ];

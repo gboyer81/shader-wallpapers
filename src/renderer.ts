@@ -1,11 +1,22 @@
 import { HEAD, MAX_CLICKS, VERTEX, type Wallpaper } from "./shaders";
 
+/** User colour grade applied in the shared `finish()` pass. */
+export interface Look {
+  hue: number; // degrees
+  saturation: number;
+  brightness: number;
+  grain: number;
+  vignette: number;
+}
+
 interface Program {
   program: WebGLProgram;
   R: WebGLUniformLocation | null;
   T: WebGLUniformLocation | null;
   M: WebGLUniformLocation | null;
   C: WebGLUniformLocation | null;
+  Look: WebGLUniformLocation | null;
+  Vig: WebGLUniformLocation | null;
 }
 
 /** Draws one full-screen triangle with the active wallpaper's fragment shader. */
@@ -14,7 +25,8 @@ export class Renderer {
   private readonly programs: Program[];
   private readonly clicks = new Float32Array(MAX_CLICKS * 3);
   private clickIndex = 0;
-  private readonly t0 = performance.now();
+  /** Shader clock in seconds; advances at the user's speed setting. */
+  private time = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement, wallpapers: Wallpaper[]) {
     const gl = canvas.getContext("webgl2", { antialias: false, alpha: false });
@@ -33,14 +45,14 @@ export class Renderer {
         console.error(w.name, gl.getProgramInfoLog(program));
       }
       const u = (n: string) => gl.getUniformLocation(program, n);
-      return { program, R: u("R"), T: u("T"), M: u("M"), C: u("C") };
+      return { program, R: u("R"), T: u("T"), M: u("M"), C: u("C"), Look: u("Look"), Vig: u("Vig") };
     });
     gl.bindVertexArray(gl.createVertexArray());
   }
 
-  /** Seconds since the renderer was created. */
-  now(): number {
-    return (performance.now() - this.t0) / 1000;
+  /** Advances the shader clock by `dt` (already scaled by speed). */
+  advance(dt: number): void {
+    this.time += dt;
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -54,18 +66,20 @@ export class Renderer {
     const i = this.clickIndex * 3;
     this.clicks[i] = x;
     this.clicks[i + 1] = y;
-    this.clicks[i + 2] = this.now();
+    this.clicks[i + 2] = this.time;
     this.clickIndex = (this.clickIndex + 1) % MAX_CLICKS;
   }
 
-  draw(index: number, time: number, mouse: [number, number]): void {
+  draw(index: number, mouse: [number, number], look: Look): void {
     const { gl, canvas } = this;
     const p = this.programs[index];
     gl.useProgram(p.program);
     gl.uniform2f(p.R, canvas.width, canvas.height);
-    gl.uniform1f(p.T, time);
+    gl.uniform1f(p.T, this.time);
     gl.uniform2f(p.M, mouse[0], mouse[1]);
     gl.uniform3fv(p.C, this.clicks);
+    gl.uniform4f(p.Look, (look.hue * Math.PI) / 180, look.saturation, look.brightness, look.grain);
+    gl.uniform1f(p.Vig, look.vignette);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
